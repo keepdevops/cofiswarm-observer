@@ -1,0 +1,4 @@
+plugin: rss
+source: rss_generator
+enabled: true
+max_items: 50

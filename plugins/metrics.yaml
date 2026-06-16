@@ -1,0 +1,4 @@
+plugin: metrics
+source: agent_metrics
+export: prometheus
+path: /metrics

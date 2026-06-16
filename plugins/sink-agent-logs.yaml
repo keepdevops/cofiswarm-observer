@@ -1,0 +1,4 @@
+sink: agent_logs
+path: /var/log/cofiswarm/agent_logs
+pattern: "*.log"
+rotate_mb: 64
