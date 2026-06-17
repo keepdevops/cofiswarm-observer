@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+
+	"github.com/keepdevops/cofiswarm-observer/internal/metrics"
 )
 
 type Server struct {
@@ -27,8 +29,8 @@ func (s *Server) Handler() http.Handler {
 		_ = json.NewEncoder(w).Encode(map[string]any{"plugins": entries, "dir": s.pluginsDir})
 	})
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-		_, _ = w.Write([]byte("# cofiswarm-observer stub\n"))
+		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+		_, _ = w.Write([]byte(metrics.RenderPrometheus()))
 	})
 	return mux
 }
@@ -36,11 +38,12 @@ func (s *Server) Handler() http.Handler {
 func DefaultDirs() (plugins, logs string) {
 	lib := os.Getenv("COFISWARM_VAR_LIB")
 	if lib == "" {
-		lib = "/var/lib/cofiswarm"
+		lib = "/var/lib"
 	}
 	logRoot := os.Getenv("COFISWARM_VAR_LOG")
 	if logRoot == "" {
 		logRoot = "/var/log/cofiswarm"
 	}
-	return filepath.Join(lib, "observer", "plugins"), filepath.Join(logRoot, "agent_logs")
+	return filepath.Join(lib, "cofiswarm", "observer", "plugins"),
+		filepath.Join(logRoot, "agent_logs")
 }
