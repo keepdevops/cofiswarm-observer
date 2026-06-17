@@ -6,16 +6,18 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/keepdevops/cofiswarm-observer/internal/bustail"
 	"github.com/keepdevops/cofiswarm-observer/internal/metrics"
 )
 
 type Server struct {
 	pluginsDir string
 	logsDir    string
+	tail       *bustail.Tailer // optional: live bus view (nil when disabled)
 }
 
-func New(pluginsDir, logsDir string) *Server {
-	return &Server{pluginsDir: pluginsDir, logsDir: logsDir}
+func New(pluginsDir, logsDir string, tail *bustail.Tailer) *Server {
+	return &Server{pluginsDir: pluginsDir, logsDir: logsDir, tail: tail}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -31,6 +33,17 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 		_, _ = w.Write([]byte(metrics.RenderPrometheus()))
+	})
+	// Live bus view, fed by the bridge SSE stream (empty when the tail is disabled).
+	mux.HandleFunc("/v1/observed", func(w http.ResponseWriter, _ *http.Request) {
+		var online []bustail.Presence
+		var alerts []bustail.Alert
+		if s.tail != nil {
+			online, alerts = s.tail.Snapshot()
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"enabled": s.tail != nil, "online": online, "alerts": alerts,
+		})
 	})
 	return mux
 }
