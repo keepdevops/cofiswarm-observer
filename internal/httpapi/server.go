@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	_ "embed"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -9,6 +10,9 @@ import (
 	"github.com/keepdevops/cofiswarm-observer/internal/bustail"
 	"github.com/keepdevops/cofiswarm-observer/internal/metrics"
 )
+
+//go:embed index.html
+var indexHTML []byte
 
 type Server struct {
 	pluginsDir string
@@ -22,6 +26,15 @@ func New(pluginsDir, logsDir string, tail *bustail.Tailer) *Server {
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	// Dashboard: a tiny embedded page that polls /v1/observed and renders the roster + alerts.
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(indexHTML)
+	})
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
