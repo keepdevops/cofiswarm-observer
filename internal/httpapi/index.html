@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cofiswarm Observer</title>
+<style>
+  /* design tokens */
+  :root {
+    --bg: #0e1116;
+    --panel: #161b22;
+    --border: #2a313c;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --ok: #3fb950;
+    --warn: #d29922;
+    --err: #f85149;
+    --s1: 6px; --s2: 12px; --s3: 20px;
+    --radius: 8px;
+    --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 system-ui, -apple-system, sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: var(--s2);
+    padding: var(--s2) var(--s3); border-bottom: 1px solid var(--border);
+  }
+  h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+  .dot.live { background: var(--ok); }
+  .dot.error { background: var(--err); }
+  .status { color: var(--muted); font-size: 13px; margin-left: auto; }
+  main { padding: var(--s3); display: grid; gap: var(--s3); max-width: 960px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); }
+  .panel h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--muted); margin: 0; padding: var(--s2) var(--s3); border-bottom: 1px solid var(--border);
+  }
+  .panel .count { color: var(--accent); }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: var(--s1) var(--s3); border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  tr:last-child td { border-bottom: 0; }
+  td.id, td.model { font-family: var(--mono); }
+  .badge { font-size: 12px; padding: 1px var(--s1); border-radius: 4px; border: 1px solid var(--border); color: var(--ok); }
+  .empty, .alert { padding: var(--s2) var(--s3); color: var(--muted); }
+  .alert { border-bottom: 1px solid var(--border); color: var(--text); }
+  .alert:last-child { border-bottom: 0; }
+  .alert .when { color: var(--muted); font-family: var(--mono); font-size: 12px; margin-right: var(--s2); }
+  #banner { display: none; padding: var(--s2) var(--s3); background: rgba(248,81,73,.12); color: var(--err); border-bottom: 1px solid var(--err); }
+  #banner.show { display: block; }
+</style>
+</head>
+<body>
+<header>
+  <span class="dot" id="dot"></span>
+  <h1>cofiswarm Observer</h1>
+  <span class="status" id="status">connecting…</span>
+</header>
+<div id="banner"></div>
+<main>
+  <section class="panel">
+    <h2>Online components <span class="count" id="online-count"></span></h2>
+    <div id="online"></div>
+  </section>
+  <section class="panel">
+    <h2>Recent alerts <span class="count" id="alert-count"></span></h2>
+    <div id="alerts"></div>
+  </section>
+</main>
+<script>
+  const POLL_MS = 3000;
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+  function setState(cls, text) {
+    $("dot").className = "dot " + cls;
+    $("status").textContent = text;
+  }
+  function banner(msg) {
+    const b = $("banner");
+    if (msg) { b.textContent = msg; b.classList.add("show"); }
+    else { b.classList.remove("show"); }
+  }
+
+  function renderOnline(list) {
+    $("online-count").textContent = list.length ? `(${list.length})` : "";
+    if (!list.length) { $("online").innerHTML = '<div class="empty">No components online.</div>'; return; }
+    const rows = list
+      .slice().sort((a, b) => (a.component_id || "").localeCompare(b.component_id || ""))
+      .map(c => `<tr>
+        <td class="id">${esc(c.component_id)}</td>
+        <td><span class="badge">${esc(c.status || "online")}</span></td>
+        <td class="model">${esc(c.model || "—")}</td>
+      </tr>`).join("");
+    $("online").innerHTML =
+      `<table><thead><tr><th>component_id</th><th>status</th><th>model</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+
+  function renderAlerts(list) {
+    $("alert-count").textContent = list.length ? `(${list.length})` : "";
+    if (!list.length) { $("alerts").innerHTML = '<div class="empty">No alerts.</div>'; return; }
+    $("alerts").innerHTML = list.slice().reverse()
+      .map(a => `<div class="alert"><span class="when">${esc(a.at)}</span>${esc(a.message)}</div>`).join("");
+  }
+
+  async function tick() {
+    try {
+      const res = await fetch("/v1/observed", { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      banner(data.enabled ? "" : "Bus tail disabled (set COFISWARM_BRIDGE_URL on the observer to see live presence).");
+      renderOnline(data.online || []);
+      renderAlerts(data.alerts || []);
+      setState("live", `updated ${new Date().toLocaleTimeString()}`);
+    } catch (err) {
+      // Never fail silently: surface the error and keep the last-known view.
+      setState("error", "disconnected");
+      banner(`Failed to reach observer /v1/observed: ${esc(err.message)}`);
+    }
+  }
+
+  tick();
+  setInterval(tick, POLL_MS);
+</script>
+</body>
+</html>
