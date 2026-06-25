@@ -76,6 +76,17 @@
   .bar .b{width:100%;max-width:46px;background:var(--btn-grad);border-radius:3px 3px 0 0;min-height:3px}
   .bar .n{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted)}
 
+  /* ---- cpu/memory self card ---- */
+  .selfcard{background:var(--panel-inner);border:1px solid var(--border-subtle);border-radius:var(--radius);padding:12px}
+  .selfhead{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px}
+  .selfhead .nm{font-weight:700}
+  .selfhead .mem{color:var(--text-muted);font-size:12px}
+  .meter{display:flex;align-items:center;gap:8px;margin-top:8px}
+  .meter .ml{width:34px;font-size:11px;color:var(--text-muted)}
+  .meter .track{flex:1;height:8px;background:var(--border-subtle);border-radius:4px;overflow:hidden}
+  .meter .fill{height:100%;background:var(--btn-grad);border-radius:4px;transition:width .4s}
+  .meter .mv{width:46px;text-align:right;font-weight:700;font-size:12px}
+
   /* ---- component map (chips) ---- */
   .map{display:flex;flex-wrap:wrap;gap:8px}
   .chip{display:flex;align-items:center;gap:7px;border:1px solid var(--border);border-radius:var(--radius);
@@ -127,6 +138,8 @@
     return "service";
   }
   const byId=(a,b)=>(a.component_id||"").localeCompare(b.component_id||"");
+  function fmtB(b){ if(!b) return "0B"; const u=["B","KiB","MiB","GiB","TiB"]; let i=0,v=b;
+    while(v>=1024&&i<u.length-1){v/=1024;i++;} return v.toFixed(i>=2?2:0)+u[i]; }
 
   // ---- widget registry: each renders its card body from the snapshot {online, alerts} ----
   const WIDGETS = [
@@ -151,6 +164,13 @@
       const mx=Math.max(1,...Object.values(c));
       return `<div class="bars">`+["agent","mode","responder","service"].map(k=>
         `<div class="bar"><div class="v">${c[k]}</div><div class="b" style="height:${Math.round(c[k]/mx*64)}px"></div><div class="n">${k}s</div></div>`).join("")+`</div>`; } },
+    { id:"cpumem", title:"CPU / Memory", span:"span4", render:(s)=>{
+      const st=s.stats||{}, cpu=st.cpu_pct||0, mem=st.mem_pct||0;
+      return `<div class="selfcard">
+        <div class="selfhead"><span class="nm">Observer (self)</span><span class="mem">${fmtB(st.mem_used)} / ${fmtB(st.mem_total)}</span></div>
+        <div class="meter"><span class="ml">CPU</span><div class="track"><div class="fill" style="width:${Math.min(100,cpu)}%"></div></div><span class="mv">${cpu}%</span></div>
+        <div class="meter"><span class="ml">MEM</span><div class="track"><div class="fill" style="width:${Math.min(100,mem)}%"></div></div><span class="mv">${mem}%</span></div>
+      </div>`; } },
     { id:"map", title:"Component Map", span:"span8", render:(s)=>{
       if(!s.online.length) return `<div class="empty">No components online.</div>`;
       return `<div class="map">`+s.online.slice().sort(byId).map(x=>
@@ -189,15 +209,19 @@
   function banner(msg){ const b=$("banner"); if(msg){b.textContent=msg;b.classList.add("show");} else b.classList.remove("show"); }
 
   function render(snap){
-    const s={ online:snap.online||[], alerts:snap.alerts||[] };
+    const s={ online:snap.online||[], alerts:snap.alerts||[], stats:snap.stats||{} };
     WIDGETS.forEach(w=>{ const el=$("b-"+w.id); if(el) el.innerHTML=w.render(s); });
   }
 
   async function tick(){
     try{
-      const res=await fetch("/v1/observed",{cache:"no-store"});
-      if(!res.ok) throw new Error("HTTP "+res.status);
-      const data=await res.json();
+      const [obsRes, statRes]=await Promise.all([
+        fetch("/v1/observed",{cache:"no-store"}),
+        fetch("/v1/stats",{cache:"no-store"}).catch(e=>{ console.error("stats fetch:",e); return null; }),
+      ]);
+      if(!obsRes.ok) throw new Error("HTTP "+obsRes.status);
+      const data=await obsRes.json();
+      if(statRes && statRes.ok){ try{ data.stats=(await statRes.json()).self||{}; }catch(e){ console.error("stats parse:",e); } }
       banner(data.enabled ? "" : "Bus tail disabled — set COFISWARM_BRIDGE_URL on the observer to see live presence.");
       render(data);
       setConn("live","Live");

@@ -9,6 +9,7 @@ import (
 
 	"github.com/keepdevops/cofiswarm-observer/internal/bustail"
 	"github.com/keepdevops/cofiswarm-observer/internal/metrics"
+	"github.com/keepdevops/cofiswarm-observer/internal/sysstat"
 )
 
 //go:embed index.html
@@ -18,10 +19,11 @@ type Server struct {
 	pluginsDir string
 	logsDir    string
 	tail       *bustail.Tailer // optional: live bus view (nil when disabled)
+	stat       *sysstat.Sampler
 }
 
 func New(pluginsDir, logsDir string, tail *bustail.Tailer) *Server {
-	return &Server{pluginsDir: pluginsDir, logsDir: logsDir, tail: tail}
+	return &Server{pluginsDir: pluginsDir, logsDir: logsDir, tail: tail, stat: sysstat.New()}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -46,6 +48,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 		_, _ = w.Write([]byte(metrics.RenderPrometheus()))
+	})
+	// Observer's own CPU/memory ("self"), for the dashboard CPU/Memory widget.
+	mux.HandleFunc("/v1/stats", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"self": s.stat.Read()})
 	})
 	// Live bus view, fed by the bridge SSE stream (empty when the tail is disabled).
 	mux.HandleFunc("/v1/observed", func(w http.ResponseWriter, _ *http.Request) {
