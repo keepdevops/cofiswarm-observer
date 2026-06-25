@@ -36,6 +36,7 @@ type Snapshot struct {
 // Client lazily refreshes a cached snapshot (so a 3s frontend poll doesn't hammer Docker).
 type Client struct {
 	http   *http.Client
+	base   string // request base URL
 	filter string // only containers whose name contains this (e.g. "cofiswarm"); "" = all
 
 	mu     sync.Mutex
@@ -44,25 +45,31 @@ type Client struct {
 	ttl    time.Duration
 }
 
-// New builds a client for the socket (COFISWARM_DOCKER_SOCK, default /var/run/docker.sock).
-// filter limits to containers whose name contains it.
+// New builds a client. Preferred: COFISWARM_DOCKER_HOST=http://docker-socket-proxy:2375 — a
+// read-only socket proxy (no raw socket / root on the observer). Falls back to the unix socket
+// COFISWARM_DOCKER_SOCK (default /var/run/docker.sock) when the host is unset. filter limits to
+// containers whose name contains it.
 func New(filter string) *Client {
+	c := &Client{filter: filter, ttl: 3 * time.Second}
+	if host := strings.TrimRight(os.Getenv("COFISWARM_DOCKER_HOST"), "/"); host != "" {
+		c.base = host
+		c.http = &http.Client{Timeout: 6 * time.Second} // TCP to the proxy; default transport
+		return c
+	}
 	sock := os.Getenv("COFISWARM_DOCKER_SOCK")
 	if sock == "" {
 		sock = "/var/run/docker.sock"
 	}
-	return &Client{
-		filter: filter,
-		ttl:    3 * time.Second,
-		http: &http.Client{
-			Timeout: 6 * time.Second,
-			Transport: &http.Transport{
-				DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-					return (&net.Dialer{}).DialContext(ctx, "unix", sock)
-				},
+	c.base = "http://docker"
+	c.http = &http.Client{
+		Timeout: 6 * time.Second,
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, "unix", sock)
 			},
 		},
 	}
+	return c
 }
 
 // Read returns the cached snapshot, refreshing if older than ttl.
@@ -84,7 +91,7 @@ func (c *Client) Read() Snapshot {
 }
 
 func (c *Client) get(path string, out any) error {
-	req, err := http.NewRequest(http.MethodGet, "http://docker"+path, nil)
+	req, err := http.NewRequest(http.MethodGet, c.base+path, nil)
 	if err != nil {
 		return err
 	}
