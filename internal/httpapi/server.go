@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/keepdevops/cofiswarm-observer/internal/bustail"
+	"github.com/keepdevops/cofiswarm-observer/internal/dockerstat"
 	"github.com/keepdevops/cofiswarm-observer/internal/metrics"
 	"github.com/keepdevops/cofiswarm-observer/internal/sysstat"
 )
@@ -20,10 +21,13 @@ type Server struct {
 	logsDir    string
 	tail       *bustail.Tailer // optional: live bus view (nil when disabled)
 	stat       *sysstat.Sampler
+	docker     *dockerstat.Client
 }
 
 func New(pluginsDir, logsDir string, tail *bustail.Tailer) *Server {
-	return &Server{pluginsDir: pluginsDir, logsDir: logsDir, tail: tail, stat: sysstat.New()}
+	// Docker widget scopes to cofiswarm-* containers; fails soft if the socket isn't mounted.
+	return &Server{pluginsDir: pluginsDir, logsDir: logsDir, tail: tail,
+		stat: sysstat.New(), docker: dockerstat.New("cofiswarm")}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -52,6 +56,10 @@ func (s *Server) Handler() http.Handler {
 	// Observer's own CPU/memory ("self"), for the dashboard CPU/Memory widget.
 	mux.HandleFunc("/v1/stats", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"self": s.stat.Read()})
+	})
+	// Per-container CPU/memory via the Docker socket (available=false if not mounted).
+	mux.HandleFunc("/v1/docker", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(s.docker.Read())
 	})
 	// Live bus view, fed by the bridge SSE stream (empty when the tail is disabled).
 	mux.HandleFunc("/v1/observed", func(w http.ResponseWriter, _ *http.Request) {

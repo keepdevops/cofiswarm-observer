@@ -87,6 +87,17 @@
   .meter .fill{height:100%;background:var(--btn-grad);border-radius:4px;transition:width .4s}
   .meter .mv{width:46px;text-align:right;font-weight:700;font-size:12px}
 
+  /* ---- docker stats rows ---- */
+  .dock{display:flex;flex-direction:column;gap:8px}
+  .dock .row{display:grid;grid-template-columns:1fr 52px 1fr 70px;align-items:center;gap:10px;font-size:12px}
+  .dock .dn{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .dock .dn .ds{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ok);margin-right:6px}
+  .dock .dn .ds.off{background:var(--text-dim)}
+  .dock .cpu{text-align:right;font-weight:700}
+  .dock .track{height:7px;background:var(--border-subtle);border-radius:4px;overflow:hidden}
+  .dock .fill{height:100%;background:var(--btn-grad)}
+  .dock .mm{text-align:right;color:var(--text-muted);font-size:11px}
+
   /* ---- component map (chips) ---- */
   .map{display:flex;flex-wrap:wrap;gap:8px}
   .chip{display:flex;align-items:center;gap:7px;border:1px solid var(--border);border-radius:var(--radius);
@@ -171,6 +182,16 @@
         <div class="meter"><span class="ml">CPU</span><div class="track"><div class="fill" style="width:${Math.min(100,cpu)}%"></div></div><span class="mv">${cpu}%</span></div>
         <div class="meter"><span class="ml">MEM</span><div class="track"><div class="fill" style="width:${Math.min(100,mem)}%"></div></div><span class="mv">${mem}%</span></div>
       </div>`; } },
+    { id:"docker", title:"Docker Containers", span:"span6", render:(s)=>{
+      const d=s.docker||{};
+      if(!d.available) return `<div class="empty">Docker socket not mounted — add /var/run/docker.sock to the observer.</div>`;
+      const cs=d.containers||[];
+      if(!cs.length) return `<div class="empty">No containers.</div>`;
+      return `<div class="dock">`+cs.map(c=>
+        `<div class="row"><span class="dn"><span class="ds ${c.state==='running'?'':'off'}"></span>${esc((c.name||'').replace(/^cofiswarm-/,''))}</span>`+
+        `<span class="cpu">${c.cpu_pct}%</span>`+
+        `<div class="track"><div class="fill" style="width:${Math.min(100,c.mem_pct)}%"></div></div>`+
+        `<span class="mm">${fmtB(c.mem_used)}</span></div>`).join("")+`</div>`; } },
     { id:"map", title:"Component Map", span:"span8", render:(s)=>{
       if(!s.online.length) return `<div class="empty">No components online.</div>`;
       return `<div class="map">`+s.online.slice().sort(byId).map(x=>
@@ -208,8 +229,19 @@
   function setConn(cls,label){ $("conn").className="obs-conn "+cls; $("conn-label").textContent=label; }
   function banner(msg){ const b=$("banner"); if(msg){b.textContent=msg;b.classList.add("show");} else b.classList.remove("show"); }
 
+  // Docker stats poll on its own (slower) cadence — its socket read can lag the roster tick.
+  let dockerData = { available:false, containers:[] };
+  async function pollDocker(){
+    try{
+      const r=await fetch("/v1/docker",{cache:"no-store"});
+      if(r.ok) dockerData=await r.json();
+    }catch(e){ console.error("docker poll:", e); }
+    const el=$("b-docker");
+    if(el) el.innerHTML=WIDGETS.find(w=>w.id==="docker").render({docker:dockerData});
+  }
+
   function render(snap){
-    const s={ online:snap.online||[], alerts:snap.alerts||[], stats:snap.stats||{} };
+    const s={ online:snap.online||[], alerts:snap.alerts||[], stats:snap.stats||{}, docker:dockerData };
     WIDGETS.forEach(w=>{ const el=$("b-"+w.id); if(el) el.innerHTML=w.render(s); });
   }
 
@@ -233,6 +265,7 @@
     }
   }
   buildGrid(); tick(); setInterval(tick, POLL_MS);
+  pollDocker(); setInterval(pollDocker, 5000);
 </script>
 </body>
 </html>
