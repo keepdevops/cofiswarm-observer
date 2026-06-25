@@ -5,127 +5,210 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>cofiswarm Observer</title>
 <style>
-  /* design tokens */
+  /* ---- design tokens (retro orange/cream) ---- */
   :root {
-    --bg: #0e1116;
-    --panel: #161b22;
-    --border: #2a313c;
-    --text: #e6edf3;
-    --muted: #8b949e;
-    --accent: #58a6ff;
-    --ok: #3fb950;
-    --warn: #d29922;
-    --err: #f85149;
-    --s1: 6px; --s2: 12px; --s3: 20px;
-    --radius: 8px;
-    --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+    --bg:#f6f5f0; --panel:#fff; --panel-inner:#f0ede6;
+    --border:#d8d6cc; --border-subtle:#e8e6df;
+    --accent:#b85c38; --accent-dim:#9a4a28; --accent-bright:#c87050;
+    --text:#2a2420; --text-muted:#6a6058; --text-dim:#9a9088;
+    --ok:#1a7a42; --warn:#b45309; --crit:#c0392b;
+    --btn-grad:linear-gradient(135deg,#c87050 0%,#a04830 100%);
+    --gap:14px; --radius:6px;
+    --mono:"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
   }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0; background: var(--bg); color: var(--text);
-    font: 14px/1.5 system-ui, -apple-system, sans-serif;
-  }
-  header {
-    display: flex; align-items: center; gap: var(--s2);
-    padding: var(--s2) var(--s3); border-bottom: 1px solid var(--border);
-  }
-  h1 { font-size: 16px; margin: 0; font-weight: 600; }
-  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
-  .dot.live { background: var(--ok); }
-  .dot.error { background: var(--err); }
-  .status { color: var(--muted); font-size: 13px; margin-left: auto; }
-  main { padding: var(--s3); display: grid; gap: var(--s3); max-width: 960px; }
-  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); }
-  .panel h2 {
-    font-size: 13px; text-transform: uppercase; letter-spacing: .04em;
-    color: var(--muted); margin: 0; padding: var(--s2) var(--s3); border-bottom: 1px solid var(--border);
-  }
-  .panel .count { color: var(--accent); }
-  table { width: 100%; border-collapse: collapse; }
-  th, td { text-align: left; padding: var(--s1) var(--s3); border-bottom: 1px solid var(--border); }
-  th { color: var(--muted); font-weight: 500; font-size: 12px; }
-  tr:last-child td { border-bottom: 0; }
-  td.id, td.model { font-family: var(--mono); }
-  .badge { font-size: 12px; padding: 1px var(--s1); border-radius: 4px; border: 1px solid var(--border); color: var(--ok); }
-  .empty, .alert { padding: var(--s2) var(--s3); color: var(--muted); }
-  .alert { border-bottom: 1px solid var(--border); color: var(--text); }
-  .alert:last-child { border-bottom: 0; }
-  .alert .when { color: var(--muted); font-family: var(--mono); font-size: 12px; margin-right: var(--s2); }
-  #banner { display: none; padding: var(--s2) var(--s3); background: rgba(248,81,73,.12); color: var(--err); border-bottom: 1px solid var(--err); }
-  #banner.show { display: block; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+    font-family:var(--mono); font-size:13px; line-height:1.4; }
+
+  /* ---- header ---- */
+  .obs-header { display:flex; align-items:center; gap:14px;
+    padding:12px 20px; border-bottom:1px solid var(--border); background:var(--panel); }
+  .obs-logo { width:34px; height:34px; border-radius:var(--radius); background:var(--btn-grad);
+    display:grid; place-items:center; color:#fff; font-size:18px; }
+  .obs-title { font-size:20px; font-weight:700; color:var(--accent); letter-spacing:.01em; }
+  .obs-sub { font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:.08em; }
+  .obs-tools { margin-left:auto; display:flex; align-items:center; gap:14px; }
+  .obs-conn { display:flex; align-items:center; gap:7px; font-size:12px; color:var(--text-muted);
+    text-transform:uppercase; letter-spacing:.06em; }
+  .obs-conn .dot { width:9px; height:9px; border-radius:50%; background:var(--text-dim); }
+  .obs-conn.live .dot { background:var(--ok); box-shadow:0 0 6px var(--ok); }
+  .obs-conn.error .dot { background:var(--crit); box-shadow:0 0 6px var(--crit); }
+
+  #banner { display:none; padding:9px 20px; background:#fbeae6; color:var(--crit);
+    border-bottom:1px solid var(--crit); font-size:12px; }
+  #banner.show { display:block; }
+
+  /* ---- grid + cards ---- */
+  .grid { padding:var(--gap); display:grid; gap:var(--gap);
+    grid-template-columns:repeat(12,1fr); align-items:start; }
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
+    border-left:3px solid var(--accent); display:flex; flex-direction:column; min-height:116px; }
+  .card.hide { display:none; }
+  .card-h { display:flex; align-items:center; gap:8px; padding:10px 12px;
+    border-bottom:1px solid var(--border-subtle); }
+  .card-h .grip { color:var(--text-dim); cursor:grab; letter-spacing:-2px; }
+  .card-h .ttl { font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--accent); font-weight:700; }
+  .card-h .x { margin-left:auto; color:var(--text-dim); cursor:pointer; border:0; background:none; font-size:14px; }
+  .card-h .x:hover { color:var(--crit); }
+  .card-b { padding:14px 12px; flex:1; }
+  .span2{grid-column:span 2}.span3{grid-column:span 3}.span4{grid-column:span 4}
+  .span5{grid-column:span 5}.span6{grid-column:span 6}.span8{grid-column:span 8}
+  @media(max-width:900px){ .grid{grid-template-columns:repeat(6,1fr)} [class*=span]{grid-column:span 6} }
+
+  /* ---- stat ---- */
+  .stat .big { font-size:46px; font-weight:700; line-height:1; }
+  .stat .lbl { font-size:11px; text-transform:uppercase; letter-spacing:.07em; color:var(--text-muted); margin-top:8px; }
+  .stat.ok .big{color:var(--ok)} .stat.crit .big{color:var(--crit)} .stat.accent .big{color:var(--accent)}
+
+  /* ---- donut ---- */
+  .donut-wrap{display:flex;align-items:center;gap:18px}
+  .donut{width:120px;height:120px;border-radius:50%;display:grid;place-items:center;flex:none}
+  .donut .hole{width:74px;height:74px;border-radius:50%;background:var(--panel);display:grid;place-items:center;
+    font-size:18px;font-weight:700;color:var(--text)}
+  .legend{font-size:12px;display:grid;gap:6px}
+  .legend .row{display:flex;align-items:center;gap:8px;color:var(--text-muted)}
+  .legend .sw{width:11px;height:11px;border-radius:2px}
+
+  /* ---- bars (by type) ---- */
+  .bars{display:flex;gap:18px;align-items:flex-end;height:84px;justify-content:space-around}
+  .bar{display:flex;flex-direction:column;align-items:center;gap:6px;flex:1}
+  .bar .v{font-size:12px;font-weight:700}
+  .bar .b{width:100%;max-width:46px;background:var(--btn-grad);border-radius:3px 3px 0 0;min-height:3px}
+  .bar .n{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted)}
+
+  /* ---- component map (chips) ---- */
+  .map{display:flex;flex-wrap:wrap;gap:8px}
+  .chip{display:flex;align-items:center;gap:7px;border:1px solid var(--border);border-radius:var(--radius);
+    padding:7px 10px;background:var(--panel-inner);font-size:12px}
+  .chip .d{width:8px;height:8px;border-radius:50%;background:var(--ok)}
+  .chip.t-agent .d{background:var(--ok)} .chip.t-mode .d{background:var(--accent)}
+  .chip.t-responder .d{background:var(--warn)} .chip.t-service .d{background:#3b6ea5}
+
+  /* ---- list (components) ---- */
+  .list{display:flex;flex-direction:column}
+  .li{display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:1px solid var(--border-subtle)}
+  .li:last-child{border-bottom:0}
+  .li .id{font-weight:600} .li .mdl{color:var(--text-dim);margin-left:auto;font-size:11px}
+  .badge{font-size:11px;padding:1px 7px;border-radius:10px;background:#e3f0e8;color:var(--ok);border:1px solid #bfe0cd}
+  .tag{font-size:10px;text-transform:uppercase;color:var(--text-dim);border:1px solid var(--border);border-radius:3px;padding:0 4px}
+  .alert{padding:8px 4px;border-bottom:1px solid var(--border-subtle);font-size:12px}
+  .alert:last-child{border-bottom:0}
+  .alert .when{color:var(--text-dim);margin-right:8px;font-size:11px}
+  .empty{color:var(--text-dim);padding:8px 4px}
+  .obs-foot{padding:8px 20px;color:var(--text-dim);font-size:11px;border-top:1px solid var(--border);background:var(--panel)}
 </style>
 </head>
 <body>
-<header>
-  <span class="dot" id="dot"></span>
-  <h1>cofiswarm Observer</h1>
-  <span class="status" id="status">connecting…</span>
+<header class="obs-header">
+  <div class="obs-logo">◉</div>
+  <div>
+    <div class="obs-title">Observer</div>
+    <div class="obs-sub">Agents · Modes · Backends</div>
+  </div>
+  <div class="obs-tools">
+    <button class="x" id="reset" style="font-size:12px;color:var(--text-muted)" title="restore hidden widgets">Reset layout</button>
+    <div class="obs-conn" id="conn"><span class="dot"></span><span id="conn-label">connecting…</span></div>
+  </div>
 </header>
 <div id="banner"></div>
-<main>
-  <section class="panel">
-    <h2>Online components <span class="count" id="online-count"></span></h2>
-    <div id="online"></div>
-  </section>
-  <section class="panel">
-    <h2>Recent alerts <span class="count" id="alert-count"></span></h2>
-    <div id="alerts"></div>
-  </section>
-</main>
+<div class="grid" id="grid"></div>
+<footer class="obs-foot"><span id="updated">awaiting first snapshot…</span></footer>
+
 <script>
   const POLL_MS = 3000;
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
-  function setState(cls, text) {
-    $("dot").className = "dot " + cls;
-    $("status").textContent = text;
+  // ---- component classification (drives bars / map / tags) ----
+  function typeOf(id){
+    if (id.startsWith("agent-")) return "agent";
+    if (id.startsWith("mode-")) return "mode";
+    if (id.startsWith("responder-")) return "responder";
+    return "service";
   }
-  function banner(msg) {
-    const b = $("banner");
-    if (msg) { b.textContent = msg; b.classList.add("show"); }
-    else { b.classList.remove("show"); }
+  const byId=(a,b)=>(a.component_id||"").localeCompare(b.component_id||"");
+
+  // ---- widget registry: each renders its card body from the snapshot {online, alerts} ----
+  const WIDGETS = [
+    { id:"healthy", title:"Healthy", span:"span3", render:(s)=>
+      `<div class="stat ok"><div class="big">${s.online.length}</div><div class="lbl">online</div></div>` },
+    { id:"alerts_n", title:"Alerts", span:"span3", render:(s)=>
+      `<div class="stat ${s.alerts.length?'crit':''}"><div class="big">${s.alerts.length}</div><div class="lbl">active alerts</div></div>` },
+    { id:"donut", title:"Up vs Alerts", span:"span4", render:(s)=>{
+      const up=s.online.length, dn=s.alerts.length, tot=up+dn||1, pct=Math.round(up/tot*100), deg=up/tot*360;
+      return `<div class="donut-wrap">
+        <div class="donut" style="background:conic-gradient(var(--ok) 0 ${deg}deg, var(--crit) ${deg}deg 360deg)">
+          <div class="hole">${pct}%</div></div>
+        <div class="legend">
+          <div class="row"><span class="sw" style="background:var(--ok)"></span>Online: ${up}</div>
+          <div class="row"><span class="sw" style="background:var(--crit)"></span>Alerts: ${dn}</div>
+        </div></div>`; } },
+    { id:"total", title:"Total Components", span:"span2", render:(s)=>
+      `<div class="stat accent"><div class="big">${s.online.length}</div><div class="lbl">tracked</div></div>` },
+    { id:"bytype", title:"By Type", span:"span4", render:(s)=>{
+      const c={agent:0,mode:0,responder:0,service:0};
+      s.online.forEach(x=>c[typeOf(x.component_id)]++);
+      const mx=Math.max(1,...Object.values(c));
+      return `<div class="bars">`+["agent","mode","responder","service"].map(k=>
+        `<div class="bar"><div class="v">${c[k]}</div><div class="b" style="height:${Math.round(c[k]/mx*64)}px"></div><div class="n">${k}s</div></div>`).join("")+`</div>`; } },
+    { id:"map", title:"Component Map", span:"span8", render:(s)=>{
+      if(!s.online.length) return `<div class="empty">No components online.</div>`;
+      return `<div class="map">`+s.online.slice().sort(byId).map(x=>
+        `<div class="chip t-${typeOf(x.component_id)}"><span class="d"></span>${esc(x.component_id)}</div>`).join("")+`</div>`; } },
+    { id:"components", title:"Components", span:"span6", render:(s)=>{
+      if(!s.online.length) return `<div class="empty">No components online.</div>`;
+      return `<div class="list">`+s.online.slice().sort(byId).map(x=>
+        `<div class="li"><span class="tag">${typeOf(x.component_id)}</span><span class="id">${esc(x.component_id)}</span>`+
+        `<span class="badge">${esc(x.status||"online")}</span><span class="mdl">${esc(x.model||"—")}</span></div>`).join("")+`</div>`; } },
+    { id:"alertlist", title:"Recent Alerts", span:"span6", render:(s)=>{
+      if(!s.alerts.length) return `<div class="empty">No alerts.</div>`;
+      return s.alerts.slice().reverse().map(a=>
+        `<div class="alert"><span class="when">${esc(a.at)}</span>${esc(a.message)}</div>`).join(""); } },
+  ];
+
+  // ---- card chrome (build once); × hides a widget, Reset restores all (persisted) ----
+  const HIDDEN_KEY="obs_hidden";
+  let hidden = new Set(JSON.parse(localStorage.getItem(HIDDEN_KEY)||"[]"));
+  const saveHidden = () => localStorage.setItem(HIDDEN_KEY, JSON.stringify([...hidden]));
+
+  function buildGrid(){
+    $("grid").innerHTML = WIDGETS.map(w=>
+      `<section class="card ${w.span} ${hidden.has(w.id)?'hide':''}" data-w="${w.id}">
+        <div class="card-h"><span class="grip">⠿</span><span class="ttl">${esc(w.title)}</span>
+          <button class="x" data-x="${w.id}">×</button></div>
+        <div class="card-b" id="b-${w.id}"></div></section>`).join("");
+    $("grid").querySelectorAll("[data-x]").forEach(b=>b.onclick=()=>{
+      hidden.add(b.dataset.x); saveHidden();
+      $("grid").querySelector(`[data-w="${b.dataset.x}"]`).classList.add("hide");
+    });
+  }
+  $("reset").onclick=()=>{ hidden.clear(); saveHidden();
+    $("grid").querySelectorAll(".card").forEach(c=>c.classList.remove("hide")); };
+
+  function setConn(cls,label){ $("conn").className="obs-conn "+cls; $("conn-label").textContent=label; }
+  function banner(msg){ const b=$("banner"); if(msg){b.textContent=msg;b.classList.add("show");} else b.classList.remove("show"); }
+
+  function render(snap){
+    const s={ online:snap.online||[], alerts:snap.alerts||[] };
+    WIDGETS.forEach(w=>{ const el=$("b-"+w.id); if(el) el.innerHTML=w.render(s); });
   }
 
-  function renderOnline(list) {
-    $("online-count").textContent = list.length ? `(${list.length})` : "";
-    if (!list.length) { $("online").innerHTML = '<div class="empty">No components online.</div>'; return; }
-    const rows = list
-      .slice().sort((a, b) => (a.component_id || "").localeCompare(b.component_id || ""))
-      .map(c => `<tr>
-        <td class="id">${esc(c.component_id)}</td>
-        <td><span class="badge">${esc(c.status || "online")}</span></td>
-        <td class="model">${esc(c.model || "—")}</td>
-      </tr>`).join("");
-    $("online").innerHTML =
-      `<table><thead><tr><th>component_id</th><th>status</th><th>model</th></tr></thead><tbody>${rows}</tbody></table>`;
-  }
-
-  function renderAlerts(list) {
-    $("alert-count").textContent = list.length ? `(${list.length})` : "";
-    if (!list.length) { $("alerts").innerHTML = '<div class="empty">No alerts.</div>'; return; }
-    $("alerts").innerHTML = list.slice().reverse()
-      .map(a => `<div class="alert"><span class="when">${esc(a.at)}</span>${esc(a.message)}</div>`).join("");
-  }
-
-  async function tick() {
-    try {
-      const res = await fetch("/v1/observed", { cache: "no-store" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      banner(data.enabled ? "" : "Bus tail disabled (set COFISWARM_BRIDGE_URL on the observer to see live presence).");
-      renderOnline(data.online || []);
-      renderAlerts(data.alerts || []);
-      setState("live", `updated ${new Date().toLocaleTimeString()}`);
-    } catch (err) {
-      // Never fail silently: surface the error and keep the last-known view.
-      setState("error", "disconnected");
-      banner(`Failed to reach observer /v1/observed: ${esc(err.message)}`);
+  async function tick(){
+    try{
+      const res=await fetch("/v1/observed",{cache:"no-store"});
+      if(!res.ok) throw new Error("HTTP "+res.status);
+      const data=await res.json();
+      banner(data.enabled ? "" : "Bus tail disabled — set COFISWARM_BRIDGE_URL on the observer to see live presence.");
+      render(data);
+      setConn("live","Live");
+      $("updated").textContent="updated "+new Date().toLocaleTimeString();
+    }catch(err){
+      console.error("observer tick failed:", err);   // never fail silently
+      setConn("error","disconnected");
+      banner("Failed to reach /v1/observed: "+esc(err.message));
     }
   }
-
-  tick();
-  setInterval(tick, POLL_MS);
+  buildGrid(); tick(); setInterval(tick, POLL_MS);
 </script>
 </body>
 </html>
