@@ -47,6 +47,9 @@
   .card-h { display:flex; align-items:center; gap:8px; padding:10px 12px;
     border-bottom:1px solid var(--border-subtle); }
   .card-h .grip { color:var(--text-dim); cursor:grab; letter-spacing:-2px; }
+  .card-h .grip:active { cursor:grabbing; }
+  .card.dragging { opacity:.45; }
+  .card.drop-target { outline:2px dashed var(--accent); outline-offset:-2px; }
   .card-h .ttl { font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--accent); font-weight:700; }
   .card-h .x { margin-left:auto; color:var(--text-dim); cursor:pointer; border:0; background:none; font-size:14px; }
   .card-h .x:hover { color:var(--crit); }
@@ -207,24 +210,51 @@
         `<div class="alert"><span class="when">${esc(a.at)}</span>${esc(a.message)}</div>`).join(""); } },
   ];
 
-  // ---- card chrome (build once); × hides a widget, Reset restores all (persisted) ----
-  const HIDDEN_KEY="obs_hidden";
+  // ---- card chrome: × hides a widget, grip drags to reorder, Reset restores both (persisted) ----
+  const HIDDEN_KEY="obs_hidden", ORDER_KEY="obs_order";
   let hidden = new Set(JSON.parse(localStorage.getItem(HIDDEN_KEY)||"[]"));
   const saveHidden = () => localStorage.setItem(HIDDEN_KEY, JSON.stringify([...hidden]));
+  const defaultOrder = () => WIDGETS.map(w=>w.id);
+  const widget = (id) => WIDGETS.find(w=>w.id===id);
+  // saved order, dropping unknown ids and appending any widgets added since.
+  let order = (JSON.parse(localStorage.getItem(ORDER_KEY)||"null") || defaultOrder()).filter(widget);
+  defaultOrder().forEach(id=>{ if(!order.includes(id)) order.push(id); });
+  const saveOrder = () => localStorage.setItem(ORDER_KEY, JSON.stringify(order));
 
   function buildGrid(){
-    $("grid").innerHTML = WIDGETS.map(w=>
-      `<section class="card ${w.span} ${hidden.has(w.id)?'hide':''}" data-w="${w.id}">
-        <div class="card-h"><span class="grip">⠿</span><span class="ttl">${esc(w.title)}</span>
-          <button class="x" data-x="${w.id}">×</button></div>
-        <div class="card-b" id="b-${w.id}"></div></section>`).join("");
+    $("grid").innerHTML = order.map(id=>{ const w=widget(id);
+      return `<section class="card ${w.span} ${hidden.has(w.id)?'hide':''}" data-w="${w.id}">
+        <div class="card-h"><span class="grip" draggable="true" title="drag to reorder">⠿</span>
+          <span class="ttl">${esc(w.title)}</span><button class="x" data-x="${w.id}">×</button></div>
+        <div class="card-b" id="b-${w.id}"></div></section>`; }).join("");
     $("grid").querySelectorAll("[data-x]").forEach(b=>b.onclick=()=>{
       hidden.add(b.dataset.x); saveHidden();
       $("grid").querySelector(`[data-w="${b.dataset.x}"]`).classList.add("hide");
     });
+    wireDrag();
   }
-  $("reset").onclick=()=>{ hidden.clear(); saveHidden();
-    $("grid").querySelectorAll(".card").forEach(c=>c.classList.remove("hide")); };
+
+  // HTML5 drag-and-drop reorder: the grip is the handle; dropping a card before another
+  // reorders `order` and persists it.
+  let dragId=null;
+  function wireDrag(){
+    $("grid").querySelectorAll(".card").forEach(card=>{
+      const grip=card.querySelector(".grip");
+      grip.ondragstart=(e)=>{ dragId=card.dataset.w; e.dataTransfer.effectAllowed="move";
+        e.dataTransfer.setData("text/plain",dragId); card.classList.add("dragging"); };
+      grip.ondragend=()=>{ card.classList.remove("dragging");
+        $("grid").querySelectorAll(".drop-target").forEach(c=>c.classList.remove("drop-target")); dragId=null; };
+      card.ondragover=(e)=>{ if(dragId && dragId!==card.dataset.w){ e.preventDefault();
+        e.dataTransfer.dropEffect="move"; card.classList.add("drop-target"); } };
+      card.ondragleave=()=>card.classList.remove("drop-target");
+      card.ondrop=(e)=>{ e.preventDefault(); card.classList.remove("drop-target");
+        const from=dragId, to=card.dataset.w; if(!from||from===to) return;
+        order=order.filter(id=>id!==from); order.splice(order.indexOf(to),0,from);
+        saveOrder(); buildGrid(); render(lastSnap); };
+    });
+  }
+  $("reset").onclick=()=>{ hidden.clear(); saveHidden(); order=defaultOrder(); saveOrder();
+    buildGrid(); render(lastSnap); };
 
   function setConn(cls,label){ $("conn").className="obs-conn "+cls; $("conn-label").textContent=label; }
   function banner(msg){ const b=$("banner"); if(msg){b.textContent=msg;b.classList.add("show");} else b.classList.remove("show"); }
@@ -240,7 +270,9 @@
     if(el) el.innerHTML=WIDGETS.find(w=>w.id==="docker").render({docker:dockerData});
   }
 
+  let lastSnap = { online:[], alerts:[], stats:{} };   // for instant repaint after a reorder
   function render(snap){
+    lastSnap = snap;
     const s={ online:snap.online||[], alerts:snap.alerts||[], stats:snap.stats||{}, docker:dockerData };
     WIDGETS.forEach(w=>{ const el=$("b-"+w.id); if(el) el.innerHTML=w.render(s); });
   }
