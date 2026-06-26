@@ -72,6 +72,18 @@ func (s *Server) Handler() http.Handler {
 			"enabled": s.tail != nil, "online": online, "alerts": alerts,
 		})
 	})
+	// Dismiss all recorded alerts (alerts have no TTL). POST so a stray GET can't clear them.
+	mux.HandleFunc("/v1/alerts/clear", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST only", http.StatusMethodNotAllowed)
+			return
+		}
+		cleared := 0
+		if s.tail != nil {
+			cleared = s.tail.ClearAlerts()
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"cleared": cleared})
+	})
 	return mux
 }
 

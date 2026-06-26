@@ -51,6 +51,25 @@ func TestTranslateAnnounceToPresence(t *testing.T) {
 	}
 }
 
+func TestClearAlertsEmptiesAlertList(t *testing.T) {
+	var published []publishedEvent
+	srv := newBridgeStub(t, &published)
+	defer srv.Close()
+
+	tl := New(srv.URL)
+	tl.handle(`{"topic":"swarm.observer.alert","payload":{"message":"mode flat execute unavailable"}}`)
+	tl.handle(`{"topic":"swarm.observer.alert","payload":{"message":"dispatch timeout"}}`)
+	if _, alerts := tl.Snapshot(); len(alerts) != 2 {
+		t.Fatalf("alerts before clear = %d, want 2", len(alerts))
+	}
+	if n := tl.ClearAlerts(); n != 2 {
+		t.Fatalf("ClearAlerts returned %d, want 2", n)
+	}
+	if _, alerts := tl.Snapshot(); len(alerts) != 0 {
+		t.Fatalf("alerts after clear = %d, want 0", len(alerts))
+	}
+}
+
 // goodbye must flip the component offline (removed from the roster) and republish offline.
 func TestTranslateGoodbyeToOffline(t *testing.T) {
 	var published []publishedEvent

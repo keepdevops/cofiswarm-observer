@@ -54,6 +54,10 @@
   .card-h .x { margin-left:auto; color:var(--text-dim); cursor:pointer; border:0; background:none; font-size:14px; }
   .card-h .x:hover { color:var(--crit); }
   .card-b { padding:14px 12px; flex:1; }
+  .clear-alerts { float:right; margin:-2px 0 8px 8px; padding:2px 10px; font:inherit; font-size:11px;
+    color:var(--accent); background:var(--panel-inner); border:1px solid var(--border);
+    border-radius:var(--radius); cursor:pointer; }
+  .clear-alerts:hover { color:var(--panel); background:var(--accent); border-color:var(--accent); }
   .span2{grid-column:span 2}.span3{grid-column:span 3}.span4{grid-column:span 4}
   .span5{grid-column:span 5}.span6{grid-column:span 6}.span8{grid-column:span 8}
   @media(max-width:900px){ .grid{grid-template-columns:repeat(6,1fr)} [class*=span]{grid-column:span 6} }
@@ -206,8 +210,10 @@
         `<span class="badge">${esc(x.status||"online")}</span><span class="mdl">${esc(x.model||"—")}</span></div>`).join("")+`</div>`; } },
     { id:"alertlist", title:"Recent Alerts", span:"span6", render:(s)=>{
       if(!s.alerts.length) return `<div class="empty">No alerts.</div>`;
-      return s.alerts.slice().reverse().map(a=>
-        `<div class="alert"><span class="when">${esc(a.at)}</span>${esc(a.message)}</div>`).join(""); } },
+      const list = s.alerts.slice().reverse().map(a=>
+        `<div class="alert"><span class="when">${esc(a.at)}</span>${esc(a.message)}</div>`).join("");
+      // Alerts have no TTL; this dismisses resolved ones (POST /v1/alerts/clear).
+      return `<button class="clear-alerts" onclick="clearAlerts()">Clear ${s.alerts.length}</button>${list}`; } },
   ];
 
   // ---- card chrome: × hides a widget, grip drags to reorder, Reset restores both (persisted) ----
@@ -296,6 +302,14 @@
       banner("Failed to reach /v1/observed: "+esc(err.message));
     }
   }
+  // Dismiss all alerts, then refresh so the cleared state shows immediately.
+  window.clearAlerts = async function(){
+    try{
+      const res=await fetch("/v1/alerts/clear",{method:"POST",cache:"no-store"});
+      if(!res.ok) throw new Error("HTTP "+res.status);
+      await tick();
+    }catch(err){ console.error("clear alerts failed:", err); banner("Failed to clear alerts: "+esc(err.message)); }
+  };
   buildGrid(); tick(); setInterval(tick, POLL_MS);
   pollDocker(); setInterval(pollDocker, 5000);
 </script>
