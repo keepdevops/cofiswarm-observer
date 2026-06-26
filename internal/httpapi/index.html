@@ -47,6 +47,13 @@
   /* dashed cell showing where a dragged widget will land */
   .drop-preview { position:absolute; z-index:1; pointer-events:none;
     border:2px dashed var(--accent); border-radius:var(--radius); background:rgba(184,92,56,.07); }
+  /* bottom-right resize grip (corner triangle), revealed on hover */
+  .resize-h { position:absolute; right:0; bottom:0; width:16px; height:16px;
+    cursor:nwse-resize; z-index:6; opacity:0; transition:opacity .12s; }
+  .resize-h::after { content:""; position:absolute; right:3px; bottom:3px; width:7px; height:7px;
+    border-right:2px solid var(--text-muted); border-bottom:2px solid var(--text-muted); }
+  .card:hover .resize-h { opacity:.7; }
+  .resize-h:hover { opacity:1; }
   .card-h { display:flex; align-items:center; gap:8px; padding:10px 12px;
     border-bottom:1px solid var(--border-subtle);
     cursor:grab; user-select:none; touch-action:none; }
@@ -241,14 +248,17 @@
   // ---- FREE PLACEMENT: each widget keeps its own {col,top}; dragging moves ONLY that widget,
   // the rest never reflow (absolute layout, not a packed grid). × hides; Reset re-tidies. ----
   const HIDDEN_KEY="obs_hidden", POS_KEY="obs_pos";
-  const COLS=12, GAP=14, SNAP=8;
+  const COLS=12, GAP=14, SNAP=8, MIN_W=2, MIN_H=100;
   const widget = (id) => WIDGETS.find(w=>w.id===id);
-  const cols = (id) => parseInt((widget(id).span||"span3").replace("span",""),10) || 3;
-  // fixed per-widget heights (px) so the layout is deterministic and content changes scroll
-  // inside the card instead of overflowing onto neighbours.
+  // default size from the widget's span / a per-widget height table; a resized widget overrides
+  // these with its own {w,h} saved in pos[id]. Fixed heights keep content scrolling INSIDE the
+  // card (overflow:auto) instead of overflowing onto neighbours.
+  const baseW = (id) => parseInt((widget(id).span||"span3").replace("span",""),10) || 3;
   const HEIGHTS={ healthy:120, alerts_n:120, total:120, donut:220, bytype:220, cpumem:220,
     docker:280, map:300, components:280, alertlist:280 };
-  const hgt = (id) => HEIGHTS[id] || 160;
+  const baseH = (id) => HEIGHTS[id] || 160;
+  const cols = (id) => (pos[id] && pos[id].w) || baseW(id);
+  const hgt  = (id) => (pos[id] && pos[id].h) || baseH(id);
   let hidden = new Set(JSON.parse(localStorage.getItem(HIDDEN_KEY)||"[]"));
   const saveHidden = () => localStorage.setItem(HIDDEN_KEY, JSON.stringify([...hidden]));
   let pos = JSON.parse(localStorage.getItem(POS_KEY)||"null");   // {id:{col,top}} | null
@@ -256,12 +266,12 @@
 
   // tidy default: flow visible widgets left-to-right, wrapping at COLS — used on first load,
   // for any newly-added widget, and on Reset. After that, positions are whatever the user set.
-  function flowLayout(){
+  function flowLayout(){   // base sizes only, so Reset also clears any custom resize
     let col=0, top=GAP/2, rowH=0; const p={};
     WIDGETS.forEach(w=>{ if(hidden.has(w.id)) return;
-      const cw=cols(w.id);
+      const cw=baseW(w.id);
       if(col+cw>COLS){ col=0; top+=rowH+GAP; rowH=0; }
-      p[w.id]={col, top}; rowH=Math.max(rowH, hgt(w.id)); col+=cw; });
+      p[w.id]={col, top}; rowH=Math.max(rowH, baseH(w.id)); col+=cw; });
     return p;
   }
   function ensurePos(){
@@ -277,12 +287,13 @@
       `<section class="card" data-w="${w.id}">
         <div class="card-h" title="drag to move"><span class="grip">⠿</span>
           <span class="ttl">${esc(w.title)}</span><button class="x" data-x="${w.id}">×</button></div>
-        <div class="card-b" id="b-${w.id}"></div></section>`).join("");
+        <div class="card-b" id="b-${w.id}"></div>
+        <div class="resize-h" title="drag to resize"></div></section>`).join("");
     applyPos();
     $("grid").querySelectorAll("[data-x]").forEach(b=>b.onclick=()=>{
       hidden.add(b.dataset.x); saveHidden(); buildGrid(); render(lastSnap);
     });
-    wireDrag();
+    wireDrag(); wireResize();
   }
 
   // place each card by its saved {col,top}; column→% so it stays responsive on width, top in px.
@@ -331,10 +342,41 @@
           document.removeEventListener("mousemove",place);
           document.removeEventListener("mouseup",up);
           card.classList.remove("dragging"); ghost.remove(); prev.remove();
-          pos[id]=target; savePos(); applyPos();   // only this widget moves
+          pos[id]={...pos[id], ...target}; savePos(); applyPos();   // move keeps any custom w/h
         };
         place(e);
         document.addEventListener("mousemove",place);
+        document.addEventListener("mouseup",up);
+      };
+    });
+  }
+
+  // Drag the bottom-right handle to resize ONE widget — width snaps to columns, height to px.
+  // The card resizes live; on release its {w,h} are saved. Others are untouched. stopPropagation
+  // keeps the handle from also starting a header move-drag.
+  function wireResize(){
+    const gridEl=$("grid");
+    gridEl.querySelectorAll(".card").forEach(card=>{
+      const handle=card.querySelector(".resize-h"); if(!handle) return;
+      handle.onmousedown=(e)=>{
+        if(e.button!==0) return;
+        e.preventDefault(); e.stopPropagation();
+        const id=card.dataset.w, p=pos[id]||{col:0,top:GAP/2};
+        const gr=gridEl.getBoundingClientRect(), colW=gr.width/COLS;
+        const cardLeft=gr.left + p.col*colW, cardTop=gr.top + p.top;
+        let curW=cols(id), curH=hgt(id);
+        const move=(ev)=>{
+          curW=Math.max(MIN_W, Math.min(COLS-p.col, Math.round((ev.clientX-cardLeft)/colW)));
+          curH=Math.max(MIN_H, Math.round((ev.clientY-cardTop)/SNAP)*SNAP);
+          card.style.width=`calc(${curW} * (100% / ${COLS}) - ${GAP}px)`;
+          card.style.height=curH+"px";
+        };
+        const up=()=>{
+          document.removeEventListener("mousemove",move);
+          document.removeEventListener("mouseup",up);
+          pos[id]={col:p.col, top:p.top, w:curW, h:curH}; savePos(); applyPos();
+        };
+        document.addEventListener("mousemove",move);
         document.addEventListener("mouseup",up);
       };
     });
