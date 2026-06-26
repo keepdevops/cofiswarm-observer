@@ -36,6 +36,14 @@ type Alert struct {
 	At      string `json:"at"`
 }
 
+// AlertStore persists alerts so they survive an observer restart. nil = no
+// persistence (the original in-memory-only behavior). Implemented by
+// internal/alertstore; declared here to avoid an import cycle.
+type AlertStore interface {
+	Append(Alert) error
+	Clear() error
+}
+
 // Tailer subscribes to the bridge SSE stream and tracks online components + recent alerts.
 type Tailer struct {
 	url        string
@@ -45,6 +53,7 @@ type Tailer struct {
 	mu         sync.RWMutex
 	roster     map[string]Presence
 	alerts     []Alert
+	store      AlertStore           // optional: persist alerts across restarts (nil = in-memory only)
 	lastSeen   map[string]time.Time // component_id -> last time seen online, for TTL reaping
 	ttl        time.Duration        // expire a component unseen this long (<=0 disables liveness)
 	helloEvery time.Duration        // how often to broadcast hello (<=0 disables liveness)
@@ -223,13 +232,39 @@ func (t *Tailer) applyPresence(p map[string]any) {
 	}
 }
 
-func (t *Tailer) applyAlert(p map[string]any) {
-	msg, _ := p["message"].(string)
+// SetStore attaches a persistence backend; call SeedAlerts first to load history.
+func (t *Tailer) SetStore(s AlertStore) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.alerts = append(t.alerts, Alert{Message: msg, At: time.Now().UTC().Format(time.RFC3339)})
+	t.store = s
+}
+
+// SeedAlerts loads persisted alerts into the in-memory ring at startup (capped to
+// the ring size, keeping the most recent), so the live view survives a restart.
+func (t *Tailer) SeedAlerts(existing []Alert) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.alerts = append([]Alert(nil), existing...)
 	if len(t.alerts) > 100 {
 		t.alerts = t.alerts[len(t.alerts)-100:]
+	}
+}
+
+func (t *Tailer) applyAlert(p map[string]any) {
+	msg, _ := p["message"].(string)
+	alert := Alert{Message: msg, At: time.Now().UTC().Format(time.RFC3339)}
+	t.mu.Lock()
+	t.alerts = append(t.alerts, alert)
+	if len(t.alerts) > 100 {
+		t.alerts = t.alerts[len(t.alerts)-100:]
+	}
+	store := t.store
+	t.mu.Unlock()
+	// Persist outside the lock (the store has its own); failures are loud, never silent.
+	if store != nil {
+		if err := store.Append(alert); err != nil {
+			log.Printf("bustail: persist alert: %v", err)
+		}
 	}
 }
 
@@ -250,8 +285,14 @@ func (t *Tailer) Snapshot() ([]Presence, []Alert) {
 // alerts push it off or the process restarts — this lets the dashboard dismiss stale entries.
 func (t *Tailer) ClearAlerts() int {
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	n := len(t.alerts)
 	t.alerts = nil
+	store := t.store
+	t.mu.Unlock()
+	if store != nil {
+		if err := store.Clear(); err != nil {
+			log.Printf("bustail: clear persisted alerts: %v", err)
+		}
+	}
 	return n
 }
