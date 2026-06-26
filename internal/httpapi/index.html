@@ -38,22 +38,40 @@
     border-bottom:1px solid var(--crit); font-size:12px; }
   #banner.show { display:block; }
 
-  /* ---- grid + cards ---- */
-  .grid { padding:var(--gap); display:grid; gap:var(--gap);
-    grid-template-columns:repeat(12,1fr); align-items:start; }
-  .card { background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
-    border-left:3px solid var(--accent); display:flex; flex-direction:column; min-height:116px; }
+  /* ---- free-placement layout: cards are absolutely positioned by JS (applyPos) ---- */
+  .grid { position:relative; }
+  .card { position:absolute; box-sizing:border-box; overflow:hidden;
+    background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
+    border-left:3px solid var(--accent); display:flex; flex-direction:column; }
   .card.hide { display:none; }
+  /* dashed cell showing where a dragged widget will land */
+  .drop-preview { position:absolute; z-index:1; pointer-events:none;
+    border:2px dashed var(--accent); border-radius:var(--radius); background:rgba(184,92,56,.07); }
   .card-h { display:flex; align-items:center; gap:8px; padding:10px 12px;
-    border-bottom:1px solid var(--border-subtle); }
-  .card-h .grip { color:var(--text-dim); cursor:grab; letter-spacing:-2px; }
-  .card-h .grip:active { cursor:grabbing; }
-  .card.dragging { opacity:.45; }
-  .card.drop-target { outline:2px dashed var(--accent); outline-offset:-2px; }
+    border-bottom:1px solid var(--border-subtle);
+    cursor:grab; user-select:none; touch-action:none; }
+  .card-h:active { cursor:grabbing; }
+  .card-h .grip { color:var(--text-dim); letter-spacing:-2px; font-size:13px; }
+  .card.dragging { opacity:.35; }
+  .drag-ghost { position:fixed; z-index:1000; pointer-events:none; opacity:.9;
+    box-shadow:0 10px 28px rgba(0,0,0,.28); transform:rotate(1.5deg); margin:0; }
+  /* header tools: Add widget menu + Reset */
+  .obs-add { position:relative; }
+  .obs-btn { font:inherit; font-size:12px; color:var(--accent); background:var(--panel-inner);
+    border:1px solid var(--border); border-radius:var(--radius); padding:4px 10px; cursor:pointer; }
+  .obs-btn:hover { background:var(--accent); color:var(--panel); border-color:var(--accent); }
+  .obs-menu { position:absolute; right:0; top:120%; z-index:1100; min-width:170px; display:none;
+    background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
+    box-shadow:0 8px 24px rgba(0,0,0,.18); padding:4px; }
+  .obs-menu.open { display:block; }
+  .obs-menu button { display:block; width:100%; text-align:left; font:inherit; font-size:12px;
+    color:var(--text); background:none; border:0; padding:6px 10px; cursor:pointer; border-radius:4px; }
+  .obs-menu button:hover { background:var(--panel-inner); color:var(--accent); }
+  .obs-menu .empty { padding:6px 10px; font-size:12px; color:var(--text-dim); }
   .card-h .ttl { font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--accent); font-weight:700; }
   .card-h .x { margin-left:auto; color:var(--text-dim); cursor:pointer; border:0; background:none; font-size:14px; }
   .card-h .x:hover { color:var(--crit); }
-  .card-b { padding:14px 12px; flex:1; }
+  .card-b { padding:14px 12px; flex:1; overflow:auto; }
   .clear-alerts { float:right; margin:-2px 0 8px 8px; padding:2px 10px; font:inherit; font-size:11px;
     color:var(--accent); background:var(--panel-inner); border:1px solid var(--border);
     border-radius:var(--radius); cursor:pointer; }
@@ -135,7 +153,11 @@
     <div class="obs-sub">Agents · Modes · Backends</div>
   </div>
   <div class="obs-tools">
-    <button class="x" id="reset" style="font-size:12px;color:var(--text-muted)" title="restore hidden widgets">Reset layout</button>
+    <div class="obs-add">
+      <button class="obs-btn" id="addBtn" title="show a hidden widget">+ Add widget</button>
+      <div class="obs-menu" id="addMenu"></div>
+    </div>
+    <button class="obs-btn" id="reset" title="re-tidy all widgets to the default layout">Reset layout</button>
     <div class="obs-conn" id="conn"><span class="dot"></span><span id="conn-label">connecting…</span></div>
   </div>
 </header>
@@ -216,51 +238,126 @@
       return `<button class="clear-alerts" onclick="clearAlerts()">Clear ${s.alerts.length}</button>${list}`; } },
   ];
 
-  // ---- card chrome: × hides a widget, grip drags to reorder, Reset restores both (persisted) ----
-  const HIDDEN_KEY="obs_hidden", ORDER_KEY="obs_order";
+  // ---- FREE PLACEMENT: each widget keeps its own {col,top}; dragging moves ONLY that widget,
+  // the rest never reflow (absolute layout, not a packed grid). × hides; Reset re-tidies. ----
+  const HIDDEN_KEY="obs_hidden", POS_KEY="obs_pos";
+  const COLS=12, GAP=14, SNAP=8;
+  const widget = (id) => WIDGETS.find(w=>w.id===id);
+  const cols = (id) => parseInt((widget(id).span||"span3").replace("span",""),10) || 3;
+  // fixed per-widget heights (px) so the layout is deterministic and content changes scroll
+  // inside the card instead of overflowing onto neighbours.
+  const HEIGHTS={ healthy:120, alerts_n:120, total:120, donut:220, bytype:220, cpumem:220,
+    docker:280, map:300, components:280, alertlist:280 };
+  const hgt = (id) => HEIGHTS[id] || 160;
   let hidden = new Set(JSON.parse(localStorage.getItem(HIDDEN_KEY)||"[]"));
   const saveHidden = () => localStorage.setItem(HIDDEN_KEY, JSON.stringify([...hidden]));
-  const defaultOrder = () => WIDGETS.map(w=>w.id);
-  const widget = (id) => WIDGETS.find(w=>w.id===id);
-  // saved order, dropping unknown ids and appending any widgets added since.
-  let order = (JSON.parse(localStorage.getItem(ORDER_KEY)||"null") || defaultOrder()).filter(widget);
-  defaultOrder().forEach(id=>{ if(!order.includes(id)) order.push(id); });
-  const saveOrder = () => localStorage.setItem(ORDER_KEY, JSON.stringify(order));
+  let pos = JSON.parse(localStorage.getItem(POS_KEY)||"null");   // {id:{col,top}} | null
+  const savePos = () => localStorage.setItem(POS_KEY, JSON.stringify(pos));
+
+  // tidy default: flow visible widgets left-to-right, wrapping at COLS — used on first load,
+  // for any newly-added widget, and on Reset. After that, positions are whatever the user set.
+  function flowLayout(){
+    let col=0, top=GAP/2, rowH=0; const p={};
+    WIDGETS.forEach(w=>{ if(hidden.has(w.id)) return;
+      const cw=cols(w.id);
+      if(col+cw>COLS){ col=0; top+=rowH+GAP; rowH=0; }
+      p[w.id]={col, top}; rowH=Math.max(rowH, hgt(w.id)); col+=cw; });
+    return p;
+  }
+  function ensurePos(){
+    if(!pos) pos=flowLayout();
+    const fresh=flowLayout();
+    WIDGETS.forEach(w=>{ if(!hidden.has(w.id) && !pos[w.id]) pos[w.id]=fresh[w.id]; });
+    savePos();
+  }
 
   function buildGrid(){
-    $("grid").innerHTML = order.map(id=>{ const w=widget(id);
-      return `<section class="card ${w.span} ${hidden.has(w.id)?'hide':''}" data-w="${w.id}">
-        <div class="card-h"><span class="grip" draggable="true" title="drag to reorder">⠿</span>
+    ensurePos();
+    $("grid").innerHTML = WIDGETS.filter(w=>!hidden.has(w.id)).map(w=>
+      `<section class="card" data-w="${w.id}">
+        <div class="card-h" title="drag to move"><span class="grip">⠿</span>
           <span class="ttl">${esc(w.title)}</span><button class="x" data-x="${w.id}">×</button></div>
-        <div class="card-b" id="b-${w.id}"></div></section>`; }).join("");
+        <div class="card-b" id="b-${w.id}"></div></section>`).join("");
+    applyPos();
     $("grid").querySelectorAll("[data-x]").forEach(b=>b.onclick=()=>{
-      hidden.add(b.dataset.x); saveHidden();
-      $("grid").querySelector(`[data-w="${b.dataset.x}"]`).classList.add("hide");
+      hidden.add(b.dataset.x); saveHidden(); buildGrid(); render(lastSnap);
     });
     wireDrag();
   }
 
-  // HTML5 drag-and-drop reorder: the grip is the handle; dropping a card before another
-  // reorders `order` and persists it.
-  let dragId=null;
+  // place each card by its saved {col,top}; column→% so it stays responsive on width, top in px.
+  function applyPos(){
+    let bottom=0;
+    $("grid").querySelectorAll(".card").forEach(c=>{
+      const id=c.dataset.w, w=cols(id), h=hgt(id), p=pos[id]||{col:0,top:GAP/2};
+      c.style.left=`calc(${p.col} * (100% / ${COLS}) + ${GAP/2}px)`;
+      c.style.width=`calc(${w} * (100% / ${COLS}) - ${GAP}px)`;
+      c.style.top=p.top+"px"; c.style.height=h+"px";
+      bottom=Math.max(bottom, p.top+h);
+    });
+    $("grid").style.height=(bottom+GAP)+"px";
+  }
+
+  // Drag the card header to move a single widget. A ghost follows the cursor; a dashed preview
+  // shows the snapped destination cell. On release ONLY this widget's {col,top} changes — every
+  // other widget keeps its position (no reflow). Document-level mouse handlers; geometry only.
   function wireDrag(){
-    $("grid").querySelectorAll(".card").forEach(card=>{
-      const grip=card.querySelector(".grip");
-      grip.ondragstart=(e)=>{ dragId=card.dataset.w; e.dataTransfer.effectAllowed="move";
-        e.dataTransfer.setData("text/plain",dragId); card.classList.add("dragging"); };
-      grip.ondragend=()=>{ card.classList.remove("dragging");
-        $("grid").querySelectorAll(".drop-target").forEach(c=>c.classList.remove("drop-target")); dragId=null; };
-      card.ondragover=(e)=>{ if(dragId && dragId!==card.dataset.w){ e.preventDefault();
-        e.dataTransfer.dropEffect="move"; card.classList.add("drop-target"); } };
-      card.ondragleave=()=>card.classList.remove("drop-target");
-      card.ondrop=(e)=>{ e.preventDefault(); card.classList.remove("drop-target");
-        const from=dragId, to=card.dataset.w; if(!from||from===to) return;
-        order=order.filter(id=>id!==from); order.splice(order.indexOf(to),0,from);
-        saveOrder(); buildGrid(); render(lastSnap); };
+    const gridEl=$("grid");
+    gridEl.querySelectorAll(".card").forEach(card=>{
+      card.querySelector(".card-h").onmousedown=(e)=>{
+        if(e.button!==0 || e.target.closest(".x")) return;   // left button only; not the hide ×
+        e.preventDefault();
+        const id=card.dataset.w, w=cols(id), h=hgt(id);
+        const gr=gridEl.getBoundingClientRect(), colW=gr.width/COLS;
+        const r=card.getBoundingClientRect(), offX=e.clientX-r.left, offY=e.clientY-r.top;
+        card.classList.add("dragging");
+        const ghost=card.cloneNode(true);
+        ghost.classList.add("drag-ghost"); ghost.classList.remove("dragging");
+        ghost.style.width=r.width+"px"; ghost.style.height=r.height+"px";
+        document.body.appendChild(ghost);
+        const prev=document.createElement("div"); prev.className="drop-preview"; gridEl.appendChild(prev);
+        let target={col:(pos[id]||{}).col||0, top:(pos[id]||{}).top||GAP/2};
+        const place=(ev)=>{
+          const gl=ev.clientX-offX, gt=ev.clientY-offY;
+          ghost.style.left=gl+"px"; ghost.style.top=gt+"px";
+          let col=Math.max(0, Math.min(COLS-w, Math.round((gl-gr.left)/colW)));
+          let top=Math.max(0, Math.round((gt-gr.top)/SNAP)*SNAP);
+          target={col, top};
+          prev.style.left=`calc(${col} * (100% / ${COLS}) + ${GAP/2}px)`;
+          prev.style.width=`calc(${w} * (100% / ${COLS}) - ${GAP}px)`;
+          prev.style.top=top+"px"; prev.style.height=h+"px";
+        };
+        const up=()=>{
+          document.removeEventListener("mousemove",place);
+          document.removeEventListener("mouseup",up);
+          card.classList.remove("dragging"); ghost.remove(); prev.remove();
+          pos[id]=target; savePos(); applyPos();   // only this widget moves
+        };
+        place(e);
+        document.addEventListener("mousemove",place);
+        document.addEventListener("mouseup",up);
+      };
     });
   }
-  $("reset").onclick=()=>{ hidden.clear(); saveHidden(); order=defaultOrder(); saveOrder();
+  $("reset").onclick=()=>{ hidden.clear(); saveHidden(); pos=flowLayout(); savePos();
     buildGrid(); render(lastSnap); };
+
+  // ---- Add widget: bring a hidden widget back, placed at the bottom-left so it covers nothing ----
+  function showWidget(id){
+    hidden.delete(id); saveHidden();
+    let bottom=GAP/2;
+    WIDGETS.forEach(w=>{ if(!hidden.has(w.id) && w.id!==id && pos[w.id]) bottom=Math.max(bottom, pos[w.id].top+hgt(w.id)+GAP); });
+    pos[id]={col:0, top:bottom}; savePos();
+    buildGrid(); render(lastSnap);
+  }
+  function refreshAddMenu(){
+    const m=$("addMenu"), items=WIDGETS.filter(w=>hidden.has(w.id));
+    m.innerHTML = items.length ? items.map(w=>`<button data-add="${w.id}">${esc(w.title)}</button>`).join("")
+      : `<div class="empty">All widgets shown</div>`;
+    m.querySelectorAll("[data-add]").forEach(b=>b.onclick=()=>{ showWidget(b.dataset.add); refreshAddMenu(); });
+  }
+  $("addBtn").onclick=(e)=>{ e.stopPropagation(); refreshAddMenu(); $("addMenu").classList.toggle("open"); };
+  document.addEventListener("click",()=>$("addMenu").classList.remove("open"));
 
   function setConn(cls,label){ $("conn").className="obs-conn "+cls; $("conn-label").textContent=label; }
   function banner(msg){ const b=$("banner"); if(msg){b.textContent=msg;b.classList.add("show");} else b.classList.remove("show"); }
