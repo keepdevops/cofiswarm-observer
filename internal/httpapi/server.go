@@ -38,6 +38,9 @@ func (s *Server) Handler() http.Handler {
 			http.NotFound(w, r)
 			return
 		}
+		// The dashboard is go:embed'd and changes on every image rebuild; without no-store the
+		// browser serves a stale page after a deploy (e.g. the old drag handler lingered).
+		w.Header().Set("Cache-Control", "no-store, must-revalidate")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write(indexHTML)
 	})
