@@ -244,3 +244,14 @@ func (t *Tailer) Snapshot() ([]Presence, []Alert) {
 	alerts := append([]Alert(nil), t.alerts...)
 	return online, alerts
 }
+
+// ClearAlerts drops all recorded alerts and returns how many were cleared. Alerts have no TTL
+// (applyAlert only appends), so a resolved one-shot alert otherwise lingers until 100 newer
+// alerts push it off or the process restarts — this lets the dashboard dismiss stale entries.
+func (t *Tailer) ClearAlerts() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	n := len(t.alerts)
+	t.alerts = nil
+	return n
+}
