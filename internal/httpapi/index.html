@@ -45,9 +45,10 @@
     border-left:3px solid var(--accent); display:flex; flex-direction:column; min-height:116px; }
   .card.hide { display:none; }
   .card-h { display:flex; align-items:center; gap:8px; padding:10px 12px;
-    border-bottom:1px solid var(--border-subtle); }
-  .card-h .grip { color:var(--text-dim); cursor:grab; letter-spacing:-2px; }
-  .card-h .grip:active { cursor:grabbing; }
+    border-bottom:1px solid var(--border-subtle);
+    cursor:grab; user-select:none; touch-action:none; }
+  .card-h:active { cursor:grabbing; }
+  .card-h .grip { color:var(--text-dim); letter-spacing:-2px; font-size:13px; }
   .card.dragging { opacity:.45; }
   .card.drop-target { outline:2px dashed var(--accent); outline-offset:-2px; }
   .card-h .ttl { font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--accent); font-weight:700; }
@@ -230,7 +231,7 @@
   function buildGrid(){
     $("grid").innerHTML = order.map(id=>{ const w=widget(id);
       return `<section class="card ${w.span} ${hidden.has(w.id)?'hide':''}" data-w="${w.id}">
-        <div class="card-h"><span class="grip" draggable="true" title="drag to reorder">⠿</span>
+        <div class="card-h" title="drag to reorder"><span class="grip">⠿</span>
           <span class="ttl">${esc(w.title)}</span><button class="x" data-x="${w.id}">×</button></div>
         <div class="card-b" id="b-${w.id}"></div></section>`; }).join("");
     $("grid").querySelectorAll("[data-x]").forEach(b=>b.onclick=()=>{
@@ -240,23 +241,37 @@
     wireDrag();
   }
 
-  // HTML5 drag-and-drop reorder: the grip is the handle; dropping a card before another
-  // reorders `order` and persists it.
-  let dragId=null;
+  // Pointer-based reorder: the card header is the drag handle (replaces fragile native HTML5
+  // DnD, which often won't engage on trackpads and gave a near-invisible 1-char grip). Pointer
+  // capture keeps move/up firing on the source header; elementFromPoint finds the card under the
+  // cursor to drop before. Reorders `order` and persists it.
+  let dragId=null, dragCard=null;
+  const clearDropTargets=()=>$("grid").querySelectorAll(".drop-target").forEach(c=>c.classList.remove("drop-target"));
+  const cardUnder=(x,y)=>{ const el=document.elementFromPoint(x,y); return el && el.closest(".card"); };
   function wireDrag(){
     $("grid").querySelectorAll(".card").forEach(card=>{
-      const grip=card.querySelector(".grip");
-      grip.ondragstart=(e)=>{ dragId=card.dataset.w; e.dataTransfer.effectAllowed="move";
-        e.dataTransfer.setData("text/plain",dragId); card.classList.add("dragging"); };
-      grip.ondragend=()=>{ card.classList.remove("dragging");
-        $("grid").querySelectorAll(".drop-target").forEach(c=>c.classList.remove("drop-target")); dragId=null; };
-      card.ondragover=(e)=>{ if(dragId && dragId!==card.dataset.w){ e.preventDefault();
-        e.dataTransfer.dropEffect="move"; card.classList.add("drop-target"); } };
-      card.ondragleave=()=>card.classList.remove("drop-target");
-      card.ondrop=(e)=>{ e.preventDefault(); card.classList.remove("drop-target");
-        const from=dragId, to=card.dataset.w; if(!from||from===to) return;
+      const h=card.querySelector(".card-h");
+      h.onpointerdown=(e)=>{
+        if(e.button!==0 || e.target.closest(".x")) return;   // left button only; not the hide ×
+        dragId=card.dataset.w; dragCard=card; card.classList.add("dragging");
+        h.setPointerCapture(e.pointerId); e.preventDefault();
+      };
+      h.onpointermove=(e)=>{
+        if(!dragId) return;
+        clearDropTargets();
+        const tgt=cardUnder(e.clientX,e.clientY);
+        if(tgt && tgt.dataset.w!==dragId) tgt.classList.add("drop-target");
+      };
+      h.onpointerup=(e)=>{
+        if(!dragId) return;
+        try{ h.releasePointerCapture(e.pointerId); }catch(_){}
+        const tgt=cardUnder(e.clientX,e.clientY);
+        clearDropTargets(); if(dragCard) dragCard.classList.remove("dragging");
+        const from=dragId, to=tgt && tgt.dataset.w; dragId=null; dragCard=null;
+        if(!to || from===to) return;
         order=order.filter(id=>id!==from); order.splice(order.indexOf(to),0,from);
-        saveOrder(); buildGrid(); render(lastSnap); };
+        saveOrder(); buildGrid(); render(lastSnap);
+      };
     });
   }
   $("reset").onclick=()=>{ hidden.clear(); saveHidden(); order=defaultOrder(); saveOrder();
