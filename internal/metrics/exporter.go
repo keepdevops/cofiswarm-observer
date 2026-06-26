@@ -38,6 +38,8 @@ func RenderPrometheus() string {
 	b.WriteString("# TYPE cofiswarm_endpoint_up gauge\n")
 	b.WriteString("# HELP cofiswarm_slots_busy Busy slot count per endpoint.\n")
 	b.WriteString("# TYPE cofiswarm_slots_busy gauge\n")
+	b.WriteString("# HELP cofiswarm_slots_total Total slot count per endpoint.\n")
+	b.WriteString("# TYPE cofiswarm_slots_total gauge\n")
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Get(slotManagerURL() + "/api/pressure")
@@ -73,6 +75,7 @@ func RenderPrometheus() string {
 		}
 		fmt.Fprintf(&b, "cofiswarm_kv_pressure_usage{%s} %g\n", labels, usage)
 		fmt.Fprintf(&b, "cofiswarm_slots_busy{%s} %d\n", labels, e.SlotsBusy)
+		fmt.Fprintf(&b, "cofiswarm_slots_total{%s} %d\n", labels, e.SlotsTotal)
 	}
 	return b.String()
 }

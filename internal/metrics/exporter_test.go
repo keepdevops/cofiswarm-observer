@@ -21,6 +21,7 @@ func TestRenderPrometheus(t *testing.T) {
 		"0.42",
 		"cofiswarm_endpoint_up",
 		"cofiswarm_slots_busy",
+		`cofiswarm_slots_total{port="8086",backend="llama",endpoint_id="coder7b"} 2`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q in:\n%s", want, out)
